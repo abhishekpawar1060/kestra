@@ -339,6 +339,7 @@ public class JdbcExecutor implements ExecutorInterface, Service {
             });
     }
 
+    // TODO proto executionprocess queue without exec content
     private void executionQueue(Either<Execution, DeserializationException> either) {
         if (either.isRight()) {
             log.error("Unable to deserialize an execution: {}", either.getRight().getMessage());

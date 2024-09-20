@@ -4,7 +4,6 @@ import io.kestra.core.models.flows.Flow;
 import io.kestra.core.queues.QueueException;
 import io.kestra.core.queues.QueueFactoryInterface;
 import io.kestra.core.queues.QueueInterface;
-import io.kestra.core.runners.Indexer;
 import io.kestra.core.utils.TestsUtils;
 import io.kestra.plugin.core.debug.Return;
 import io.kestra.core.utils.IdUtils;
@@ -81,7 +80,7 @@ abstract public class JdbcQueueTest {
         flowQueue.emit(builder("io.kestra.f1"));
 
         CountDownLatch countDownLatch = new CountDownLatch(1);
-        Flux<Flow> receive = TestsUtils.receive(flowQueue, Indexer.class, either -> {
+        Flux<Flow> receive = TestsUtils.receive(flowQueue, JdbcIndexer.class, either -> {
             countDownLatch.countDown();
         });
 
@@ -93,7 +92,7 @@ abstract public class JdbcQueueTest {
         flowQueue.emit(builder("io.kestra.f2"));
 
         CountDownLatch countDownLatch2 = new CountDownLatch(1);
-        receive = TestsUtils.receive(flowQueue, Indexer.class, either -> {
+        receive = TestsUtils.receive(flowQueue, JdbcIndexer.class, either -> {
             countDownLatch2.countDown();
         });
         countDownLatch2.await(5, TimeUnit.SECONDS);
@@ -107,7 +106,7 @@ abstract public class JdbcQueueTest {
         flowQueue.emit("consumer_group", builder("io.kestra.f1"));
 
         CountDownLatch countDownLatch = new CountDownLatch(1);
-        Flux<Flow> receive = TestsUtils.receive(flowQueue, "consumer_group", Indexer.class, either -> {
+        Flux<Flow> receive = TestsUtils.receive(flowQueue, "consumer_group", JdbcIndexer.class, either -> {
             countDownLatch.countDown();
         });
 
@@ -119,7 +118,7 @@ abstract public class JdbcQueueTest {
         flowQueue.emit("consumer_group", builder("io.kestra.f2"));
 
         CountDownLatch countDownLatch2 = new CountDownLatch(1);
-        receive = TestsUtils.receive(flowQueue, "consumer_group", Indexer.class, either -> {
+        receive = TestsUtils.receive(flowQueue, "consumer_group", JdbcIndexer.class, either -> {
             countDownLatch2.countDown();
         });
         countDownLatch2.await(5, TimeUnit.SECONDS);
