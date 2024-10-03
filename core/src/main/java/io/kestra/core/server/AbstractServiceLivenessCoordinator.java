@@ -7,12 +7,12 @@ import lombok.extern.slf4j.Slf4j;
 
 import java.time.Duration;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Random;
 import java.util.Set;
 
-import static io.kestra.core.server.Service.ServiceState.CREATED;
-import static io.kestra.core.server.Service.ServiceState.RUNNING;
+import static io.kestra.core.server.Service.ServiceState.*;
 
 /**
  * Base class for coordinating service liveness.
@@ -33,7 +33,7 @@ public abstract class AbstractServiceLivenessCoordinator extends AbstractService
 
     private static final String TASK_NAME = "service-liveness-coordinator-task";
 
-    protected final ServiceInstanceRepositoryInterface serviceInstanceRepository;
+    protected final ServiceLivenessStore store;
 
     // mutable for testing purpose
     protected String serverId = ServerInstance.INSTANCE_ID;
@@ -41,14 +41,14 @@ public abstract class AbstractServiceLivenessCoordinator extends AbstractService
     /**
      * Creates a new {@link AbstractServiceLivenessCoordinator} instance.
      *
-     * @param serviceInstanceRepository The {@link ServiceInstanceRepositoryInterface}.
-     * @param serverConfig              The server configuration.
+     * @param store        The {@link ServiceInstanceRepositoryInterface}.
+     * @param serverConfig The server configuration.
      */
     @Inject
-    public AbstractServiceLivenessCoordinator(final ServiceInstanceRepositoryInterface serviceInstanceRepository,
+    public AbstractServiceLivenessCoordinator(final ServiceLivenessStore store,
                                               final ServerConfig serverConfig) {
         super(TASK_NAME, serverConfig);
-        this.serviceInstanceRepository = serviceInstanceRepository;
+        this.store = store;
     }
 
     /**
@@ -62,6 +62,26 @@ public abstract class AbstractServiceLivenessCoordinator extends AbstractService
         Random r = new Random(); //SONAR
         int jitter = r.nextInt(DEFAULT_SCHEDULE_JITTER_MAX_MS);
         return serverConfig.liveness().interval().plus(Duration.ofMillis(jitter));
+    }
+
+    protected List<ServiceInstance> filterAllUncleanShutdownServices(final List<ServiceInstance> instances,
+                                                                     final Instant now) {
+        // List of services for which we don't know the actual state
+        final List<ServiceInstance> uncleanShutdownServices = new ArrayList<>();
+
+        // ...all services that have transitioned to DISCONNECTED or TERMINATING for more than terminationGracePeriod.
+        uncleanShutdownServices.addAll(instances.stream()
+            .filter(nonRunning -> nonRunning.state().isDisconnectedOrTerminating())
+            .filter(disconnectedOrTerminating -> disconnectedOrTerminating.isTerminationGracePeriodElapsed(now))
+            .peek(instance -> mayLogNonRespondingAfterTerminationGracePeriod(instance, now))
+            .toList()
+        );
+        // ...all services that have transitioned to TERMINATED_FORCED.
+        uncleanShutdownServices.addAll(instances.stream()
+            .filter(nonRunning -> nonRunning.is(Service.ServiceState.TERMINATED_FORCED))
+            .toList()
+        );
+        return uncleanShutdownServices;
     }
 
     protected List<ServiceInstance> filterAllNonRespondingServices(final List<ServiceInstance> instances,
@@ -87,10 +107,25 @@ public abstract class AbstractServiceLivenessCoordinator extends AbstractService
 
     }
 
+    protected void transitionAllNotRunningServiceToEmpty() {
+        // Soft delete all services which are NOT_RUNNING anymore.
+        store.findAllInstancesInStates(Set.of(Service.ServiceState.NOT_RUNNING))
+            .forEach(instance -> safelyTransitionServiceTo(instance, Service.ServiceState.EMPTY, null));
+    }
+
+    protected void transitionAllTerminatedServiceToNotRunning(final Instant now) {
+        store
+            .findAllInstancesInStates(Set.of(DISCONNECTED, TERMINATING, TERMINATED_GRACEFULLY, TERMINATED_FORCED)).stream()
+            .filter(instance -> !instance.is(Service.ServiceType.WORKER)) // WORKERS are handle above.
+            .filter(instance -> instance.isTerminationGracePeriodElapsed(now))
+            .peek(instance -> mayLogNonRespondingAfterTerminationGracePeriod(instance, now))
+            .forEach(instance -> safelyTransitionServiceTo(instance, NOT_RUNNING, DEFAULT_REASON_FOR_NOT_RUNNING));
+    }
+
     protected void mayDetectAndLogNewConnectedServices() {
         if (log.isInfoEnabled()) {
             // Log the newly-connected services (useful for troubleshooting).
-            serviceInstanceRepository.findAllInstancesInStates(Set.of(CREATED, RUNNING))
+            store.findAllInstancesInStates(Set.of(CREATED, RUNNING))
                 .stream()
                 .filter(instance -> instance.createdAt().isAfter(lastScheduledExecution()))
                 .forEach(instance -> {
@@ -110,7 +145,7 @@ public abstract class AbstractServiceLivenessCoordinator extends AbstractService
                                              final Service.ServiceState state,
                                              final String reason) {
         try {
-            serviceInstanceRepository.mayTransitionServiceTo(instance, state, reason);
+            store.update(instance, state, reason);
         } catch (Exception e) {
             // Log and ignore exception - it's safe to ignore error because the run() method is supposed to schedule at fix rate.
             log.error("Unexpected error while service [id={}, type={}, hostname={}] transition from {} to {}. Error: {}",
@@ -120,6 +155,18 @@ public abstract class AbstractServiceLivenessCoordinator extends AbstractService
                 instance.state(),
                 state,
                 e.getMessage()
+            );
+        }
+    }
+
+    protected static void mayLogNonRespondingAfterTerminationGracePeriod(final ServiceInstance instance,
+                                                                         final Instant now) {
+        if (instance.state().isDisconnectedOrTerminating()) {
+            log.warn("Detected non-responding service [id={}, type={}, hostname={}] after termination grace period ({}ms).",
+                instance.uid(),
+                instance.type(),
+                instance.server().hostname(),
+                now.toEpochMilli() - instance.updatedAt().toEpochMilli()
             );
         }
     }

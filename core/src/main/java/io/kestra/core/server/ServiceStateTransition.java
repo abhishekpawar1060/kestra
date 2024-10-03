@@ -6,11 +6,34 @@ import org.apache.commons.lang3.tuple.ImmutablePair;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.time.Instant;
 import java.util.Optional;
 
 public final class ServiceStateTransition {
 
     private static final Logger LOG = LoggerFactory.getLogger(ServiceStateTransition.class);
+
+    public static Response mayTransitionService(@Nullable final ServiceInstance from,
+                                                                final ServiceInstance to,
+                                                                final Service.ServiceState newState,
+                                                                final String reason) {
+        // UNKNOWN service
+        if (from == null) {
+            return logTransitionAndGetResponse(to, newState, null);
+        }
+
+        // VALID service transition
+        if (from.state().isValidTransition(newState)) {
+            ServiceInstance updated = from
+                .state(newState, Instant.now(), reason)
+                .server(to.server())
+                .metrics(to.metrics());
+            return logTransitionAndGetResponse(to, newState, new ImmutablePair<>(from, updated));
+        }
+
+        // INVALID service transition
+        return logTransitionAndGetResponse(to, newState, new ImmutablePair<>(from, null));
+    }
 
     /**
      * Helpers method to get a convenient response from a service state transition.
