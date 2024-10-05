@@ -18,7 +18,7 @@
     export default {
         props: {
             label: {type: String, required: true},
-            system: {type: Boolean, default: false},
+            system: {type: Boolean, default: true},
         },
         emits: ["update:modelValue"],
         data() {
