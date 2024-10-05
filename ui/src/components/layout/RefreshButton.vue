@@ -42,12 +42,17 @@
             };
         },
         created() {
-            this.autoRefresh = localStorage.getItem("autoRefresh") === "1";
+            this.autoRefresh = localStorage.getItem("autoRefresh") === "1" ? true : false;
+            if (this.autoRefresh) {
+                this.refreshHandler = setInterval(this.triggerRefresh, 10000);
+            }
         },
         methods: {
             toggleAutoRefresh() {
                 this.autoRefresh = !this.autoRefresh;
                 localStorage.setItem("autoRefresh", this.autoRefresh ? "1" : "0");
+                this.autoRefresh ? this.triggerRefresh() : this.stopRefresh();
+
             },
             triggerRefresh() {
                 this.$emit("refresh");
@@ -65,7 +70,7 @@
         watch: {
             canAutoRefresh(newValue) {
                 if (!newValue && this.autoRefresh) {
-                    this.toggleAutoRefresh();
+                    this.autoRefresh = false;
                     this.stopRefresh();
                 }
             },
